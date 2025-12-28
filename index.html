@@ -1,0 +1,92 @@
+<html>
+  <body>
+    <style>
+      #outgoing {
+        width: 600px;
+        word-wrap: break-word;
+        white-space: normal;
+      }
+    </style>
+    <form>
+      <textarea id="incoming"></textarea>
+      <button type="submit">submit</button>
+    </form>
+    <pre id="outgoing"></pre>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
+    <script>
+      const socket = new WebSocket("wss://my-api-test-domen.pp.ua");
+
+      let p = new SimplePeer({
+        initiator: false,
+        trickle: false
+      });
+
+      let hasReceivedOffer = false; // ← Защита от дублей
+
+      socket.addEventListener("open", () => {
+        console.log('✅ WebSocket connected');
+        socket.send(JSON.stringify({
+          role: "client",
+          name: "bogdan",
+          requestTo: "bot_father"
+        }));
+        console.log('📤 Sent registration');
+      });
+
+      socket.addEventListener("message", (event) => {
+        console.log('📥 Received message:', event.data);
+        const msg = JSON.parse(event.data);
+
+        if (msg.data && msg.data.type === 'offer' && !hasReceivedOffer) {
+          hasReceivedOffer = true; // ← Обрабатываем только первый offer
+          console.log('🔄 Signaling with offer:', msg.data);
+          p.signal(msg.data);
+        }
+      });
+
+      let answerSent = false; // ← Отправляем answer только один раз
+
+      p.on('signal', data => {
+        if (data.type === 'answer' && !answerSent) {
+          answerSent = true;
+          console.log('📡 Generated answer:', data);
+          socket.send(JSON.stringify({
+            role: "client",
+            name: "bogdan",
+            data: data,
+            requestTo: "bot_father"
+          }));
+          console.log('📤 Sent answer to server');
+        }
+      });
+
+      p.on('connect', () => {
+        console.log('✅✅✅ PEER CONNECTED!');
+      });
+
+      p.on('data', data => {
+        console.log('📨 Received data:', data.toString());
+        document.querySelector("body").innerHTML = data;
+      });
+
+      p.on('error', err => {
+        console.error('❌ Peer error:', err);
+      });
+
+      socket.addEventListener('error', err => {
+        console.error('❌ WebSocket error:', err);
+      });
+
+      if (sessionStorage.getItem("server-peer") !== undefined && sessionStorage.getItem("server-peer") !== null && sessionStorage.getItem("server-peer") !== "") {
+        const old_p = JSON.parse(sessionStorage.getItem("server-peer"));
+        if (p !== undefined){
+          if (old_p !== p) {
+            sessionStorage.setItem("server-peer", JSON.stringify(p));
+          } 
+        }
+      } else {
+        sessionStorage.setItem("server-peer", JSON.stringify(p));
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Server Peer</title>
+</head>
+<body>
+    <h2>Server Peer (Initiator)</h2>
+    <div id="status">Initializing...</div>
+    <textarea id="content2user" placeholder="paste html"></textarea>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
+    <script>
+        console.log('🚀 Starting peer...');
+        
+        const peer = new SimplePeer({
+            initiator: true,
+            trickle: false
+        })
+
+        let socket;
+
+        peer.on('signal', data => {
+            console.log('📡 Generated offer:', data);
+            document.getElementById('status').textContent = 'Offer generated, connecting to signaling server...';
+            
+            // Подключаемся к WebSocket ПОСЛЕ генерации offer
+            socket = new WebSocket("wss://my-api-test-domen.pp.ua");
+            
+            socket.addEventListener("open", () => {
+                console.log('✅ WebSocket connected');
+                document.getElementById('status').textContent = 'Sending offer...';
+                
+                socket.send(JSON.stringify({
+                    role: "server",
+                    name: "bot_father",
+                    data: data,
+                    requestTo: "none"
+                }))
+                
+                console.log('📤 Sent offer to signaling server');
+                document.getElementById('status').textContent = 'Offer sent! Waiting for client...';
+            });
+
+            socket.addEventListener("message", event => {
+                console.log('📥 Received message:', event.data);
+                const msg = JSON.parse(event.data)
+                if (msg.data) {
+                    console.log('🔄 Signaling with answer:', msg.data);
+                    peer.signal(msg.data)
+                    document.getElementById('status').textContent = 'Answer received, establishing connection...';
+                }
+            });
+
+            socket.addEventListener('error', err => {
+                console.error('❌ WebSocket error:', err);
+                document.getElementById('status').textContent = 'WebSocket error!';
+            });
+        })
+
+        peer.on('connect', () => {
+            console.log('✅✅✅ PEER CONNECTED!');
+            document.getElementById('status').textContent = '🎉 CONNECTED! Sending message...';
+            peer.send(content);
+        })
+
+        peer.on('data', data => {
+            console.log('📨 Received from client:', data.toString())
+        })
+
+        peer.on('error', err => {
+            console.error('❌ Peer error:', err)
+            document.getElementById('status').textContent = 'Peer error: ' + err.message;
+        })
+
+        const content = document.querySelector("#content2user");
+
+        content.addEventListener('input', () => {
+            peer.send(content.value)
+        })
+    </script>
+</body>
+</html>
