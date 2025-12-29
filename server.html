@@ -8,84 +8,77 @@
 <body>
     <h2>Server Peer (Initiator)</h2>
     <div id="status">Initializing...</div>
-    <textarea id="content2user" placeholder="paste html"></textarea>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
+    <textarea id="content2user" placeholder="Enter HTML content"></textarea>
+    <script src="https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js"></script>
     <script>
-        let peer;
-        let socket;
-        const content = document.querySelector("#content2user");
+        const content = document.getElementById("content2user");
+        const statusDiv = document.getElementById('status');
+        
+        const socket = new WebSocket("wss://my-api-test-domen.pp.ua");
+        const peer = new Peer();
+        let activeConnections = [];
 
-        function initPeer() {
-            console.log('🚀 Starting peer...');
+        peer.on('open', id => {
+            console.log(`🆔 Peer ID: ${id}`);
+            statusDiv.textContent = `Peer ID: ${id} - Connecting to signaling server...`;
             
-            peer = new SimplePeer({
-                initiator: true,
-                trickle: false
-            })
+            socket.addEventListener('open', () => {
+                console.log('✅ WebSocket connected');
+                statusDiv.textContent = 'Connected! Waiting for clients...';
+                
+                socket.send(JSON.stringify({
+                    role: "server", 
+                    name: "bot_father",
+                    data: id,
+                    requestTo: "none"
+                }));
+            });
+        });
+
+        peer.on('connection', (conn) => {
+            console.log("🔗 New client connected");
+            statusDiv.textContent = `Client connected! Total: ${activeConnections.length + 1}`;
             
-            peer.on('signal', data => {
-                console.log('📡 Generated offer:', data);
-                document.getElementById('status').textContent = 'Offer generated, connecting to signaling server...';
+            conn.on('open', () => {
+                activeConnections.push(conn);
+                console.log('✅ Connection established with client');
                 
-                // Подключаемся к WebSocket ПОСЛЕ генерации offer
-                socket = new WebSocket("wss://my-api-test-domen.pp.ua");
-                
-                socket.addEventListener("open", () => {
-                    console.log('✅ WebSocket connected');
-                    document.getElementById('status').textContent = 'Sending offer...';
-                    
-                    socket.send(JSON.stringify({
-                        role: "server",
-                        name: "bot_father",
-                        data: data,
-                        requestTo: "none"
-                    }))
-                    
-                    console.log('📤 Sent offer to signaling server');
-                    document.getElementById('status').textContent = 'Offer sent! Waiting for client...';
-                });
-                socket.addEventListener("message", event => {
-                    console.log('📥 Received message:', event.data);
-                    const msg = JSON.parse(event.data)
-                    if (msg.data) {
-                        console.log('🔄 Signaling with answer:', msg.data);
-                        peer.signal(msg.data)
-                        document.getElementById('status').textContent = 'Answer received, establishing connection...';
-                    }
-                });
-                socket.addEventListener('error', err => {
-                    console.error('❌ WebSocket error:', err);
-                    document.getElementById('status').textContent = 'WebSocket error!';
-                });
-            })
-            peer.on('connect', () => {
-                console.log('✅✅✅ PEER CONNECTED!');
-                document.getElementById('status').textContent = '🎉 CONNECTED! Sending message...';
-                peer.send(content.value);
-            })
-            peer.on('data', data => {
-                console.log('📨 Received from client:', data.toString())
-            })
-            peer.on('close', () => {
-                console.log('🔌 Connection closed, reinitializing...');
-                document.getElementById('status').textContent = 'Connection closed, waiting for new client...';
-                if (socket) socket.close();
-                setTimeout(initPeer, 1000);
-            })
-            peer.on('error', err => {
-                console.error('❌ Peer error:', err)
-                document.getElementById('status').textContent = 'Peer error: ' + err.message;
-                peer.destroy();
-            })
-        }
+                // Отправляем текущий контент при подключении
+                if (content.value) {
+                    conn.send(content.value);
+                }
+            });
+            
+            conn.on('data', (data) => {
+                console.log('📨 Received from client:', data);
+            });
+            
+            conn.on('close', () => {
+                activeConnections = activeConnections.filter(c => c !== conn);
+                console.log('🔌 Client disconnected');
+                statusDiv.textContent = `Client disconnected. Active: ${activeConnections.length}`;
+            });
+        });
 
-        initPeer();
-
+        // Отправка контента всем подключенным клиентам
         content.addEventListener('input', () => {
-            if (peer && peer.connected) {
-                peer.send(content.value)
-            }
-        })
+            const data = content.value;
+            activeConnections.forEach(conn => {
+                if (conn.open) {
+                    conn.send(data);
+                }
+            });
+        });
+
+        peer.on('error', err => {
+            console.error('❌ Peer error:', err);
+            statusDiv.textContent = 'Error: ' + err.message;
+        });
+
+        socket.addEventListener('error', err => {
+            console.error('❌ WebSocket error:', err);
+            statusDiv.textContent = 'WebSocket error!';
+        });
     </script>
 </body>
 </html>
