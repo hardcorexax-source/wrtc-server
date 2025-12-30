@@ -3,89 +3,140 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Server Peer</title>
+    <title>Server Peer (Initiator)</title>
 </head>
 <body>
     <h2>Server Peer (Initiator)</h2>
     <div id="status">Initializing...</div>
     <textarea id="content2user" placeholder="paste html"></textarea>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/simple-peer/9.11.1/simplepeer.min.js"></script>
     <script>
-        let peer;
-        let socket;
+        let pc = null;
+        let dc = null;
+        let socket = null;
         const content = document.querySelector("#content2user");
+        const status = document.getElementById('status');
+
+        const config = {
+            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+        };
+
+        function sendContent() {
+            if (dc && dc.readyState === 'open') {
+                dc.send(content.value);
+                console.log('Sent content:', content.value);
+            }
+        }
 
         function initPeer() {
             console.log('🚀 Starting peer...');
-            
-            peer = new SimplePeer({
-                initiator: true,
-                trickle: false
-            })
-            
-            peer.on('signal', data => {
-                console.log('📡 Generated offer:', data);
-                document.getElementById('status').textContent = 'Offer generated, connecting to signaling server...';
-                
-                // Подключаемся к WebSocket ПОСЛЕ генерации offer
-                socket = new WebSocket("wss://my-api-test-domen.pp.ua");
-                
-                socket.addEventListener("open", () => {
-                    console.log('✅ WebSocket connected');
-                    document.getElementById('status').textContent = 'Sending offer...';
-                    
-                    socket.send(JSON.stringify({
-                        role: "server",
-                        name: "bot_father",
-                        data: data,
-                        requestTo: "none"
-                    }))
-                    
-                    console.log('📤 Sent offer to signaling server');
-                    document.getElementById('status').textContent = 'Offer sent! Waiting for client...';
-                });
-                socket.addEventListener("message", event => {
-                    console.log('📥 Received message:', event.data);
-                    const msg = JSON.parse(event.data)
-                    if (msg.data) {
-                        console.log('🔄 Signaling with answer:', msg.data);
-                        peer.signal(msg.data)
-                        document.getElementById('status').textContent = 'Answer received, establishing connection...';
-                    }
-                });
-                socket.addEventListener('error', err => {
-                    console.error('❌ WebSocket error:', err);
-                    document.getElementById('status').textContent = 'WebSocket error!';
-                });
-            })
-            peer.on('connect', () => {
-                console.log('✅✅✅ PEER CONNECTED!');
-                document.getElementById('status').textContent = '🎉 CONNECTED! Sending message...';
-                peer.send(content.value);
-            })
-            peer.on('data', data => {
-                console.log('📨 Received from client:', data.toString())
-            })
-            peer.on('close', () => {
-                console.log('🔌 Connection closed, reinitializing...');
-                document.getElementById('status').textContent = 'Connection closed, waiting for new client...';
+            status.textContent = 'Creating peer connection...';
+
+            // Закрываем старое соединение, если было
+            if (pc) {
+                pc.close();
+            }
+
+            pc = new RTCPeerConnection(config);
+
+            // Создаём data channel
+            dc = pc.createDataChannel('content');
+
+            // НАЗНАЧАЕМ ВСЕ ОБРАБОТЧИКИ ЗДЕСЬ ОДИН РАЗ
+            dc.onopen = () => {
+                console.log('✅✅✅ DATA CHANNEL OPENED!');
+                status.textContent = '🎉 CONNECTED!';
+                sendContent(); // отправляем текущее содержимое textarea
+            };
+
+            dc.onmessage = (event) => {
+                console.log('📨 Received from client:', event.data);
+            };
+
+            dc.onclose = () => {
+                console.log('🔌 Data channel closed');
+                status.textContent = 'Connection closed, reinitializing...';
                 if (socket) socket.close();
                 setTimeout(initPeer, 1000);
-            })
-            peer.on('error', err => {
-                console.error('❌ Peer error:', err)
-                document.getElementById('status').textContent = 'Peer error: ' + err.message;
-                peer.destroy();
-            })
+            };
+
+            dc.onerror = (error) => {
+                console.error('Data channel error:', error);
+                status.textContent = 'Data channel error!';
+            };
+
+            pc.onicecandidate = (event) => {
+                // В trickle-режиме candidates отправляются отдельно, но в вашем случае signaling сервер, вероятно, не поддерживает trickle
+                // Поэтому можно игнорировать, пока не завершится сбор
+                if (!event.candidate) {
+                    console.log('ICE gathering complete');
+                }
+            };
+
+            pc.oniceconnectionstatechange = () => {
+                console.log('ICE state:', pc.iceConnectionState);
+                if (pc.iceConnectionState === 'failed' || pc.iceConnectionState === 'closed') {
+                    status.textContent = 'Connection failed/closed, reinitializing...';
+                    setTimeout(initPeer, 1000);
+                }
+            };
+
+            // Создаём и отправляем offer
+            pc.createOffer()
+                .then(offer => pc.setLocalDescription(offer))
+                .then(() => {
+                    console.log('📡 Generated offer:', pc.localDescription);
+                    status.textContent = 'Offer generated, connecting to signaling server...';
+
+                    socket = new WebSocket("wss://my-api-test-domen.pp.ua");
+
+                    socket.onopen = () => {
+                        console.log('✅ WebSocket connected');
+                        status.textContent = 'Sending offer...';
+
+                        socket.send(JSON.stringify({
+                            role: "server",
+                            name: "bot_father",
+                            data: pc.localDescription,
+                            requestTo: "none"
+                        }));
+
+                        status.textContent = 'Offer sent! Waiting for answer...';
+                    };
+
+                    socket.onmessage = async (event) => {
+                        console.log('📥 Received message:', event.data);
+                        const msg = JSON.parse(event.data);
+
+                        if (msg.data && msg.data.type === 'answer') {
+                            console.log('🔄 Received answer:', msg.data);
+                            await pc.setRemoteDescription(msg.data);
+                            status.textContent = 'Answer received, establishing connection...';
+                        }
+                    };
+
+                    socket.onerror = (err) => {
+                        console.error('❌ WebSocket error:', err);
+                        status.textContent = 'WebSocket error!';
+                    };
+
+                    socket.onclose = () => {
+                        console.log('WebSocket closed');
+                    };
+                })
+                .catch(err => {
+                    console.error('Error:', err);
+                    status.textContent = 'Error: ' + err.message;
+                    setTimeout(initPeer, 2000);
+                });
         }
 
-        initPeer();
-
+        // Отправляем при изменении текста, только если канал открыт
         content.addEventListener('input', () => {
-            if (peer && peer.connected) {
-                peer.send(content.value)
-            }
-        })
+            sendContent();
+        });
+
+        // Запускаем
+        initPeer();
     </script>
 </body>
 </html>
